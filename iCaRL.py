@@ -8,8 +8,11 @@ import torch.optim as optim
 from myNetwork import network
 from iCIFAR100 import iCIFAR100
 from torch.utils.data import DataLoader
+import pdb, os, copy
+import torchattacks
+from pathlib import Path
 
-device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def get_one_hot(target,num_class):
     one_hot=torch.zeros(target.shape[0],num_class).to(device)
@@ -18,35 +21,41 @@ def get_one_hot(target,num_class):
 
 class iCaRLmodel:
 
-    def __init__(self,numclass,feature_extractor,batch_size,task_size,memory_size,epochs,learning_rate):
+    def __init__(self,numclass,feature_extractor,batch_size,task_size,memory_size,epochs,learning_rate, robust_epochs, config):
 
         super(iCaRLmodel, self).__init__()
         self.epochs=epochs
+        self.robust_epochs = robust_epochs 
         self.learning_rate=learning_rate
         self.model = network(numclass,feature_extractor)
         self.exemplar_set = []
         self.class_mean_set = []
         self.numclass = numclass
+        self.config = config
         self.transform = transforms.Compose([#transforms.Resize(img_size),
-                                             transforms.ToTensor(),
-                                            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))])
+                                             transforms.ToTensor()
+                                            # transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+                                            ])
         self.old_model = None
 
         self.train_transform = transforms.Compose([#transforms.Resize(img_size),
                                                   transforms.RandomCrop((32,32),padding=4),
                                                   transforms.RandomHorizontalFlip(p=0.5),
                                                   transforms.ColorJitter(brightness=0.24705882352941178),
-                                                  transforms.ToTensor(),
-                                                  transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))])
+                                                  transforms.ToTensor()
+                                                #   transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+                                                  ])
         
         self.test_transform = transforms.Compose([#transforms.Resize(img_size),
-                                                   transforms.ToTensor(),
-                                                 transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))])
+                                                   transforms.ToTensor()
+                                                #  transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+                                                 ])
         
         self.classify_transform=transforms.Compose([transforms.RandomHorizontalFlip(p=1.),
                                                     #transforms.Resize(img_size),
-                                                    transforms.ToTensor(),
-                                                   transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))])
+                                                    transforms.ToTensor()
+                                                #    transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+                                                   ])
         
         self.train_dataset = iCIFAR100('dataset', transform=self.train_transform, download=True)
         self.test_dataset = iCIFAR100('dataset', test_transform=self.test_transform, train=False, download=True)
@@ -62,14 +71,17 @@ class iCaRLmodel:
     # incremental
     def beforeTrain(self):
         self.model.eval()
-        classes=[self.numclass-self.task_size,self.numclass]
-        self.train_loader,self.test_loader=self._get_train_and_test_dataloader(classes)
-        if self.numclass>self.task_size:
+        classes = [self.numclass - self.task_size, self.numclass]
+    
+        self.train_loader, self.test_loader = self._get_train_and_test_dataloader(classes)
+  
+        if self.numclass > self.task_size:
             self.model.Incremental_learning(self.numclass)
         self.model.train()
         self.model.to(device)
 
     def _get_train_and_test_dataloader(self, classes):
+        
         self.train_dataset.getTrainData(classes, self.exemplar_set)
         self.test_dataset.getTestData(classes)
         train_loader = DataLoader(dataset=self.train_dataset,
@@ -97,6 +109,48 @@ class iCaRLmodel:
     # train model
     # compute loss
     # evaluate model
+
+    def train_adv(self):
+        accuracy = 0
+        opt = optim.SGD(self.model.parameters(), lr=self.learning_rate, weight_decay=0.00001)
+        for epoch in range(self.epochs):
+            if epoch == 48:
+                if self.numclass==self.task_size:
+                     print(1)
+                     opt = optim.SGD(self.model.parameters(), lr=1.0/5, weight_decay=0.00001)
+                else:
+                     for p in opt.param_groups:
+                         p['lr'] =self.learning_rate/ 5
+                     #opt = optim.SGD(self.model.parameters(), lr=self.learning_rate/ 5,weight_decay=0.00001,momentum=0.9,nesterov=True,)
+                print("change learning rate:%.3f" % (self.learning_rate / 5))
+            elif epoch == 62:
+                if self.numclass>self.task_size:
+                     for p in opt.param_groups:
+                         p['lr'] =self.learning_rate/ 25
+                     #opt = optim.SGD(self.model.parameters(), lr=self.learning_rate/ 25,weight_decay=0.00001,momentum=0.9,nesterov=True,)
+                else:
+                     opt = optim.SGD(self.model.parameters(), lr=1.0/25, weight_decay=0.00001)
+                print("change learning rate:%.3f" % (self.learning_rate / 25))
+            elif epoch == 80:
+                  if self.numclass==self.task_size:
+                     opt = optim.SGD(self.model.parameters(), lr=1.0 / 125,weight_decay=0.00001)
+                  else:
+                     for p in opt.param_groups:
+                         p['lr'] =self.learning_rate/ 125
+                     #opt = optim.SGD(self.model.parameters(), lr=self.learning_rate / 125,weight_decay=0.00001,momentum=0.9,nesterov=True,)
+                  print("change learning rate:%.3f" % (self.learning_rate / 100))
+            for step, (indexs, images, target) in enumerate(self.train_loader):
+                images, target = images.to(device), target.to(device)
+                #output = self.model(images)
+                loss_value = self._compute_loss_adv(indexs, images, target)
+                opt.zero_grad()
+                loss_value.backward()
+                opt.step()
+                print('epoch:%d,step:%d,loss:%.3f' % (epoch, step, loss_value.item()))
+            # accuracy = self._test(self.test_loader, 1)
+            # print('epoch:%d,accuracy:%.3f' % (epoch, accuracy))
+        return 
+
     def train(self):
         accuracy = 0
         opt = optim.SGD(self.model.parameters(), lr=self.learning_rate, weight_decay=0.00001)
@@ -134,9 +188,9 @@ class iCaRLmodel:
                 loss_value.backward()
                 opt.step()
                 print('epoch:%d,step:%d,loss:%.3f' % (epoch, step, loss_value.item()))
-            accuracy = self._test(self.test_loader, 1)
-            print('epoch:%d,accuracy:%.3f' % (epoch, accuracy))
-        return accuracy
+            # accuracy = self._test(self.test_loader, 1)
+            # print('epoch:%d,accuracy:%.3f' % (epoch, accuracy))
+        return 
 
     def _test(self, testloader, mode):
         if mode==0:
@@ -154,36 +208,68 @@ class iCaRLmodel:
         self.model.train()
         return accuracy
 
-
-    def _compute_loss(self, indexs, imgs, target):
-        output=self.model(imgs)
+    def _compute_loss_adv(self, indexs, imgs, target):
+        pgd_attack = torchattacks.PGD(self.model, eps=8/255, alpha=2/225, steps=10, random_start=True)
+        imgs_adv = pgd_attack(imgs,target)
+        output = self.model(imgs_adv)
         target = get_one_hot(target, self.numclass)
         output, target = output.to(device), target.to(device)
         if self.old_model == None:
             return F.binary_cross_entropy_with_logits(output, target)
         else:
             #old_target = torch.tensor(np.array([self.old_model_output[index.item()] for index in indexs]))
+           
+            old_target = torch.sigmoid(self.old_model(imgs))
+            old_task_size = old_target.shape[1]
+            target[..., :old_task_size] = old_target
+
+            return F.binary_cross_entropy_with_logits(output, target)
+
+
+
+    def _compute_loss(self, indexs, imgs, target):
+        output=self.model(imgs)
+        target = get_one_hot(target, self.numclass)
+        output, target = output.to(device), target.to(device)
+        if self.old_model == None:
+            
+            return F.binary_cross_entropy_with_logits(output, target)
+        else:
+            #old_target = torch.tensor(np.array([self.old_model_output[index.item()] for index in indexs]))
+           
             old_target=torch.sigmoid(self.old_model(imgs))
             old_task_size = old_target.shape[1]
             target[..., :old_task_size] = old_target
+
             return F.binary_cross_entropy_with_logits(output, target)
 
 
     # change the size of examplar
-    def afterTrain(self,accuracy):
+    def afterTrain(self):
         self.model.eval()
         m=int(self.memory_size/self.numclass)
+        print (self.numclass, "m :", m)
         self._reduce_exemplar_sets(m)
         for i in range(self.numclass-self.task_size,self.numclass):
             print('construct class %s examplar:'%(i),end='')
             images=self.train_dataset.get_image_class(i)
+
             self._construct_exemplar_set(images,m)
+
+
         self.numclass+=self.task_size
         self.compute_exemplar_class_mean()
         self.model.train()
-        KNN_accuracy=self._test(self.test_loader,0)
-        print("NMS accuracy："+str(KNN_accuracy.item()))
-        filename='model/accuracy:%.3f_KNN_accuracy:%.3f_increment:%d_net.pkl' % (accuracy, KNN_accuracy, i + 10)
+
+        # delete by seungju
+        # KNN_accuracy=self._test(self.test_loader, mode = 0)
+        # print("NMS accuracy：" + str(KNN_accuracy.item()))
+        
+        path = str(Path(os.path.realpath(__file__)).parent.absolute())
+
+        # modified by seungju
+        # filename= path + '/model/accuracy:%.3f_KNN_accuracy:%.3f_increment:%d_net.pkl' % (accuracy, KNN_accuracy, i + 10)
+        filename= path + '/model/increment:%d_net.pkl' % (i + 1)
         torch.save(self.model,filename)
         self.old_model=torch.load(filename)
         self.old_model.to(device)
@@ -195,7 +281,7 @@ class iCaRLmodel:
         class_mean, feature_extractor_output = self.compute_class_mean(images, self.transform)
         exemplar = []
         now_class_mean = np.zeros((1, 512))
-     
+
         for i in range(m):
             # shape：batch_size*512
             x = class_mean - (now_class_mean + feature_extractor_output) / (i + 1)
@@ -209,12 +295,13 @@ class iCaRLmodel:
         self.exemplar_set.append(exemplar)
         #self.exemplar_set.append(images)
 
+
+
+
     def _reduce_exemplar_sets(self, m):
         for index in range(len(self.exemplar_set)):
             self.exemplar_set[index] = self.exemplar_set[index][:m]
             print('Size of class %d examplar: %s' % (index, str(len(self.exemplar_set[index]))))
-
-
 
     def Image_transform(self, images, transform):
         data = transform(Image.fromarray(images[0])).unsqueeze(0)
@@ -228,7 +315,6 @@ class iCaRLmodel:
         #feature_extractor_output = self.model.feature_extractor(x).detach().cpu().numpy()
         class_mean = np.mean(feature_extractor_output, axis=0)
         return class_mean, feature_extractor_output
-
 
     def compute_exemplar_class_mean(self):
         self.class_mean_set = []
@@ -252,3 +338,55 @@ class iCaRLmodel:
             x = np.argmin(x)
             result.append(x)
         return torch.tensor(result)
+
+    def robust_finetuning(self):
+        # Todo
+        origin_model = copy.deepcopy(self.model)
+        origin_model.eval()
+        self.model.train()
+        lr = 0.001
+        optimizer = optim.Adam(self.model.parameters(), lr = lr)
+        pgd_attack = torchattacks.PGD(self.model, eps=8/255, alpha=2/225, steps=10, random_start=True)
+        criterion_kl = nn.KLDivLoss(size_average=False)
+        XENT_loss = nn.CrossEntropyLoss()
+
+        for epoch in range(self.robust_epochs):
+            for step, (indexs, x, y) in enumerate(self.train_loader):
+                x, y = x.to(device), y.to(device)
+                N = x.shape[0]
+                x_adv = pgd_attack(x,y)
+                #output = self.model(images)
+                adv_out = self.model(x_adv)
+
+                feat_clean = origin_model.feature_extractor(x)
+                feat_adv = origin_model.feature_extractor(x_adv)
+
+
+                score = torch.exp(-self.config.beta * ((feat_clean - feat_adv)**2)) 
+                score = score.reshape(N,-1)
+                teacher_out = origin_model.forward_with_score(feat_clean, score)
+     
+
+                kl_loss = criterion_kl(F.log_softmax(adv_out, dim=1), F.softmax(teacher_out.detach(), dim=1))
+                loss = XENT_loss(adv_out,y) + self.config.alpha * (1.0 / N) *  kl_loss 
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+               
+            self.adjust_learning_rate(lr, optimizer, epoch)
+        return
+
+        
+
+    def adjust_learning_rate(self, lr, optimizer, epoch):
+        criteria = self.robust_epochs // 2
+        max_lr = lr
+        if epoch + 1 <= criteria :
+            lr = max_lr/criteria * (epoch + 1)
+        else  :
+            # lr = max_lr/criteria * (10 - epoch)
+            lr = (1/(2**(epoch + 1 - criteria)))*max_lr
+
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr

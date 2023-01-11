@@ -53,10 +53,13 @@ class iCIFAR100(CIFAR100):
             length=len(datas[0])
             labels=[np.full((length),label) for label in range(len(exemplar_set))]
 
+ 
+
         for label in range(classes[0],classes[1]):
             data=self.data[np.array(self.targets)==label]
             datas.append(data)
             labels.append(np.full((data.shape[0]),label))
+  
         self.TrainData,self.TrainLabels=self.concatenate(datas,labels)
         print("the size of train set is %s"%(str(self.TrainData.shape)))
         print("the size of train label is %s"%str(self.TrainLabels.shape))
