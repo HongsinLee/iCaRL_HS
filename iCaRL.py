@@ -261,7 +261,7 @@ class iCaRLmodel:
                 self._construct_exemplar_set_reverse_herding(images,m)
             elif exemplar_way == "random_and_herding":
                 print('random_and_herding : construct class %s examplar:'%(i),end='')
-                self._construct_exemplar_set_random_and_herding(images,m)
+                self._construct_exemplar_set_random_and_herding(images,m, ratio)
             else:
                 print('original : construct class %s examplar:'%(i),end='')
                 self._construct_exemplar_set_origin(images,m)

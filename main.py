@@ -50,7 +50,7 @@ def argument_parsing():
     parser.add_argument("--beta", default = 0, type = float)
     parser.add_argument("--method", default = "robust_finetuning", type = str)
     parser.add_argument("--exemplar", default = "original", type = str)
-    parser.add_argument("--exemplar_ratio", default = 1, type = int)
+    parser.add_argument("--exemplar_ratio", default = -1, type = float)
     return parser
  
 if __name__ == "__main__":
@@ -68,7 +68,7 @@ if __name__ == "__main__":
         npt = neptune.init(
         project="hongsin/Robust-iCaRL",
         api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI5YzBlMGI2ZS02NjM2LTRiMTMtYWU5NC00MjU1NzIwYWRlODgifQ==",
-        tags = [args.tags, "r_steps : " + str(args.robust_steps), "r_epochs : " + str(args.robust_epochs), args.method, args.exemplar, "alpha : " + str(args.alpha), "beta : " +  str(args.beta)],
+        tags = [args.tags, "r_steps : " + str(args.robust_steps), "r_epochs : " + str(args.robust_epochs), args.method, args.exemplar, "e_ratio : " + str(args.exemplar_ratio), "alpha : " + str(args.alpha), "beta : " +  str(args.beta)],
         source_files = [path+'/main.py',path+'/iCaRL.py']
         )
     else :
