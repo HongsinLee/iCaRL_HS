@@ -19,7 +19,7 @@ def robust_finetune_2(model, epochs, train_loader, config):
         model.train()
         lr = 0.001
         optimizer = optim.Adam(model.parameters(), lr = lr)
-        pgd_attack = torchattacks.PGD(model, eps=8/255, alpha=2/225, steps=10, random_start=True)
+        pgd_attack = torchattacks.PGD(model, eps=8/255, alpha=2/225, steps=config.robust_steps, random_start=True)
         criterion_kl = nn.KLDivLoss(size_average=False)
         XENT_loss = nn.CrossEntropyLoss()
 
@@ -56,7 +56,7 @@ def robust_finetune(model, epochs, train_loader, config):
         model.train()
         lr = 0.001
         optimizer = optim.Adam(model.parameters(), lr = lr)
-        pgd_attack = torchattacks.PGD(model, eps=8/255, alpha=2/225, steps=10, random_start=True)
+        pgd_attack = torchattacks.PGD(model, eps=8/255, alpha=2/225, steps=config.robust_steps, random_start=True)
         criterion_kl = nn.KLDivLoss(size_average=False)
         XENT_loss = nn.CrossEntropyLoss()
 

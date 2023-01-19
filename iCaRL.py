@@ -245,17 +245,26 @@ class iCaRLmodel:
 
 
     # change the size of examplar
-    def afterTrain(self):
+    def afterTrain(self, exemplar_way, ratio):
         self.model.eval()
         m=int(self.memory_size/self.numclass)
         print (self.numclass, "m :", m)
         self._reduce_exemplar_sets(m)
         for i in range(self.numclass-self.task_size,self.numclass):
-            print('construct class %s examplar:'%(i),end='')
             images=self.train_dataset.get_image_class(i)
 
-            self._construct_exemplar_set(images,m)
-
+            if exemplar_way == "random":
+                print('random : construct class %s examplar:'%(i),end='')
+                self._construct_exemplar_set_random(images,m)
+            elif exemplar_way == "reverse_herding":
+                print('reverse_herding : construct class %s examplar:'%(i),end='')
+                self._construct_exemplar_set_reverse_herding(images,m)
+            elif exemplar_way == "random_and_herding":
+                print('random_and_herding : construct class %s examplar:'%(i),end='')
+                self._construct_exemplar_set_random_and_herding(images,m)
+            else:
+                print('original : construct class %s examplar:'%(i),end='')
+                self._construct_exemplar_set_origin(images,m)
 
         self.numclass+=self.task_size
         self.compute_exemplar_class_mean()
@@ -277,7 +286,7 @@ class iCaRLmodel:
         
 
 
-    def _construct_exemplar_set(self, images, m):
+    def _construct_exemplar_set_origin(self, images, m):
         class_mean, feature_extractor_output = self.compute_class_mean(images, self.transform)
         exemplar = []
         now_class_mean = np.zeros((1, 512))
@@ -295,7 +304,72 @@ class iCaRLmodel:
         self.exemplar_set.append(exemplar)
         #self.exemplar_set.append(images)
 
+    def _construct_exemplar_set_reverse_herding(self, images, m):
+        class_mean, feature_extractor_output = self.compute_class_mean(images, self.transform)
+        exemplar = []
+        now_class_mean = np.zeros((1, 512))
 
+        for i in range(m):
+            # shape：batch_size*512
+            x = class_mean - (now_class_mean + feature_extractor_output) / (i + 1)
+            # shape：batch_size
+            x = np.linalg.norm(x, axis=1)
+            index = np.argmax(x)
+            now_class_mean += feature_extractor_output[index]
+            exemplar.append(images[index])
+
+        print("the size of exemplar :%s" % (str(len(exemplar))))
+        self.exemplar_set.append(exemplar)
+        #self.exemplar_set.append(images)
+
+
+    def _construct_exemplar_set_random(self, images, m):
+        exemplar = []
+        random_indices = np.random.choice(len(images),m, replace = False)
+        for index in random_indices:
+            exemplar.append(images[index])
+
+        print("the size of exemplar :%s" % (str(len(exemplar))))
+        self.exemplar_set.append(exemplar)
+
+
+    def _construct_exemplar_set_random_and_herding(self, images, m, ratio):
+        class_mean, feature_extractor_output = self.compute_class_mean(images, self.transform)
+        exemplar = []
+        temp_herding = []
+        temp_random = []
+        now_class_mean = np.zeros((1, 512))
+        num_herding = int(m * ratio)
+        num_random = m - num_herding
+
+        for i in range(num_herding):
+            # shape：batch_size*512
+            x = class_mean - (now_class_mean + feature_extractor_output) / (i + 1)
+            # shape：batch_size
+            x = np.linalg.norm(x, axis=1)
+            index = np.argmin(x)
+            now_class_mean += feature_extractor_output[index]
+            temp_herding.append(images[index])
+
+        random_indices = np.random.choice(len(images), num_random, replace = False)
+        for index in random_indices:
+            temp_random.append(images[index])
+
+        for i in range(min(num_herding, num_random)):
+            if i % 2 == 0 :
+                exemplar.append(temp_herding[i//2])
+            else : 
+                exemplar.append(temp_random[i//2])            
+        
+        if num_herding >= num_random :
+            for i in range(num_random, m):
+                exemplar.append(temp_herding[i])
+        else :
+            for i in range(num_herding, m):
+                exemplar.append(temp_random[i])
+
+        self.exemplar_set.append(exemplar)
+        #self.exemplar_set.append(images)
 
 
     def _reduce_exemplar_sets(self, m):
