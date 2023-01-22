@@ -29,6 +29,7 @@ class iCaRLmodel:
         self.learning_rate=learning_rate
         self.model = network(numclass,feature_extractor)
         self.exemplar_set = []
+        self.herding_set = []
         self.class_mean_set = []
         self.numclass = numclass
         self.config = config
@@ -245,14 +246,32 @@ class iCaRLmodel:
 
 
     # change the size of examplar
-    def afterTrain(self, exemplar_way, ratio):
+    def afterTrain(self, exemplar_way, ratio, adv_batch_set):
         self.model.eval()
         m=int(self.memory_size/self.numclass)
         print (self.numclass, "m :", m)
         self._reduce_exemplar_sets(m)
+        is_fully_compute_class_mean = 1
+
+        exemplar_method_function = "_construct_exemplar_set_" + exemplar_way
+
+        if exemplar_way == "herding_adv" or exemplar_way == "herding_adv_ratio" :
+            is_fully_compute_class_mean = 0
+
+
         for i in range(self.numclass-self.task_size,self.numclass):
             images=self.train_dataset.get_image_class(i)
+            images_adv = np.array([]).reshape(0, 3, 32, 32)
 
+            for adv_batch, adv_label_batch in adv_batch_set:
+                images_adv = np.concatenate([images_adv, adv_batch[adv_label_batch==i]], axis=0)
+            images_adv = np.reshape(np.rint(images_adv * 255).astype(np.uint8), (-1, 32, 32, 3)) 
+
+
+            print(exemplar_way+': construct class %s examplar:'%(i),end='')
+            getattr(iCaRLmodel, exemplar_method_function)(self, images, m, ratio, images_adv)
+
+            """
             if exemplar_way == "random":
                 print('random : construct class %s examplar:'%(i),end='')
                 self._construct_exemplar_set_random(images,m)
@@ -262,12 +281,26 @@ class iCaRLmodel:
             elif exemplar_way == "random_and_herding":
                 print('random_and_herding : construct class %s examplar:'%(i),end='')
                 self._construct_exemplar_set_random_and_herding(images,m, ratio)
+            elif exemplar_way == "entropy":
+                print('entropy : construct class %s examplar:'%(i),end='')
+                self._construct_exemplar_set_entropy(images,m)
+            elif exemplar_way == "herding_adv":
+                print('herding_adv : construct class %s examplar:'%(i),end='')
+                self._construct_exemplar_set_herding_adv(images_adv,m)
+            elif exemplar_way == "herding_adv_ratio":
+                print('herding_adv_ratio : construct class %s examplar:'%(i),end='')
+                self._construct_exemplar_set_herding_adv_ratio(images, images_adv,m, ratio)
             else:
                 print('original : construct class %s examplar:'%(i),end='')
-                self._construct_exemplar_set_origin(images,m)
+                self._construct_exemplar_set_original(images,m)
+            """
 
         self.numclass+=self.task_size
-        self.compute_exemplar_class_mean()
+
+        if is_fully_compute_class_mean == 1 :
+            self.compute_exemplar_class_mean()
+        else : 
+            self.compute_exemplar_class_mean_adv()
         self.model.train()
 
         # delete by seungju
@@ -286,11 +319,10 @@ class iCaRLmodel:
         
 
 
-    def _construct_exemplar_set_origin(self, images, m):
+    def _construct_exemplar_set_original(self, images, m, *args):
         class_mean, feature_extractor_output = self.compute_class_mean(images, self.transform)
         exemplar = []
         now_class_mean = np.zeros((1, 512))
-
         for i in range(m):
             # shape：batch_size*512
             x = class_mean - (now_class_mean + feature_extractor_output) / (i + 1)
@@ -304,7 +336,20 @@ class iCaRLmodel:
         self.exemplar_set.append(exemplar)
         #self.exemplar_set.append(images)
 
-    def _construct_exemplar_set_reverse_herding(self, images, m):
+    def _construct_exemplar_set_entropy(self, images, m, *args):
+        x = self.Image_transform(images, self.transform).to(device)
+        feature_extractor_output = F.normalize(self.model.feature_extractor(x).detach()).cpu().numpy()
+        entropy = np.sum(feature_extractor_output * np.log(feature_extractor_output), axis = 1)
+        exemplar = []
+
+        top_m_list = np.argsort(-entropy)[:m]
+
+        for i in top_m_list:
+            exemplar.append(images[i])
+
+        self.exemplar_set.append(exemplar)
+
+    def _construct_exemplar_set_reverse_herding(self, images, m, *args):
         class_mean, feature_extractor_output = self.compute_class_mean(images, self.transform)
         exemplar = []
         now_class_mean = np.zeros((1, 512))
@@ -323,7 +368,7 @@ class iCaRLmodel:
         #self.exemplar_set.append(images)
 
 
-    def _construct_exemplar_set_random(self, images, m):
+    def _construct_exemplar_set_random(self, images, m, *args):
         exemplar = []
         random_indices = np.random.choice(len(images),m, replace = False)
         for index in random_indices:
@@ -333,7 +378,7 @@ class iCaRLmodel:
         self.exemplar_set.append(exemplar)
 
 
-    def _construct_exemplar_set_random_and_herding(self, images, m, ratio):
+    def _construct_exemplar_set_random_and_herding(self, images, m, ratio, *args):
         class_mean, feature_extractor_output = self.compute_class_mean(images, self.transform)
         exemplar = []
         temp_herding = []
@@ -356,20 +401,82 @@ class iCaRLmodel:
             temp_random.append(images[index])
 
         for i in range(min(num_herding, num_random)):
-            if i % 2 == 0 :
-                exemplar.append(temp_herding[i//2])
-            else : 
-                exemplar.append(temp_random[i//2])            
+            exemplar.append(temp_herding[i])
+            exemplar.append(temp_random[i])            
         
         if num_herding >= num_random :
-            for i in range(num_random, m):
+            for i in range(num_random, num_herding):
                 exemplar.append(temp_herding[i])
         else :
-            for i in range(num_herding, m):
+            for i in range(num_herding, num_random):
                 exemplar.append(temp_random[i])
 
         self.exemplar_set.append(exemplar)
         #self.exemplar_set.append(images)
+
+
+    def _construct_exemplar_set_herding_adv(self, images, m, ratio, images_adv, *args):
+        class_mean, feature_extractor_output = self.compute_class_mean(images_adv, self.transform)
+        exemplar = []
+        now_class_mean = np.zeros((1, 512))
+        for i in range(m):
+            # shape：batch_size*512
+            x = class_mean - (now_class_mean + feature_extractor_output) / (i + 1)
+            # shape：batch_size
+            x = np.linalg.norm(x, axis=1)
+            index = np.argmin(x)
+            now_class_mean += feature_extractor_output[index]
+            exemplar.append(images_adv[index])
+
+        print("the size of exemplar :%s" % (str(len(exemplar))))
+        self.exemplar_set.append(exemplar)
+
+    def _construct_exemplar_set_herding_adv_ratio(self, images, m, ratio, images_adv, *args):
+        class_mean, feature_extractor_output = self.compute_class_mean(images, self.transform)
+        class_mean_adv, feature_extractor_output_adv = self.compute_class_mean(images_adv, self.transform)
+        exemplar = []
+        temp_herding = []
+        temp_adv = []
+        num_adv = int(m * ratio)
+        num_herding = m - num_adv
+        now_class_mean = np.zeros((1, 512))
+        now_class_mean_adv = np.zeros((1, 512))
+
+        for i in range(num_herding):
+            # shape：batch_size*512
+            x = class_mean - (now_class_mean + feature_extractor_output) / (i + 1)
+            # shape：batch_size
+            x = np.linalg.norm(x, axis=1)
+            index = np.argmin(x)
+            now_class_mean += feature_extractor_output[index]
+            temp_herding.append(images[index])
+
+        for i in range(num_adv):
+            # shape：batch_size*512
+            x = class_mean_adv - (now_class_mean_adv + feature_extractor_output_adv) / (i + 1)
+            # shape：batch_size
+            x = np.linalg.norm(x, axis=1)
+            index = np.argmin(x)
+            now_class_mean_adv += feature_extractor_output_adv[index]
+            temp_adv.append(images_adv[index])
+
+        for i in range(min(num_herding, num_adv)):
+            exemplar.append(temp_herding[i])
+            exemplar.append(temp_adv[i])            
+        
+        if num_herding >= num_adv :
+            for i in range(num_adv, num_herding):
+                exemplar.append(temp_herding[i])
+        else :
+            for i in range(num_herding, num_adv):
+                exemplar.append(temp_adv[i])
+
+        self.herding_set.append(temp_herding)
+        self.exemplar_set.append(exemplar)
+
+
+
+
 
 
     def _reduce_exemplar_sets(self, m):
@@ -395,6 +502,17 @@ class iCaRLmodel:
         for index in range(len(self.exemplar_set)):
             print("compute the class mean of %s"%(str(index)))
             exemplar=self.exemplar_set[index]
+            #exemplar=self.train_dataset.get_image_class(index)
+            class_mean, _ = self.compute_class_mean(exemplar, self.transform)
+            class_mean_,_=self.compute_class_mean(exemplar,self.classify_transform)
+            class_mean=(class_mean/np.linalg.norm(class_mean)+class_mean_/np.linalg.norm(class_mean_))/2
+            self.class_mean_set.append(class_mean)
+
+    def compute_exemplar_class_mean_adv(self):
+        self.class_mean_set = []
+        for index in range(len(self.herding_set)):
+            print("compute the class mean of %s"%(str(index)))
+            exemplar=self.herding_set[index]
             #exemplar=self.train_dataset.get_image_class(index)
             class_mean, _ = self.compute_class_mean(exemplar, self.transform)
             class_mean_,_=self.compute_class_mean(exemplar,self.classify_transform)

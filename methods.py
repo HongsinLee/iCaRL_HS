@@ -23,11 +23,15 @@ def robust_finetune_2(model, epochs, train_loader, config):
         criterion_kl = nn.KLDivLoss(size_average=False)
         XENT_loss = nn.CrossEntropyLoss()
 
+        adv_batch_set = []
+
         for epoch in range(epochs):
             for step, (indexs, x, y) in enumerate(train_loader):
                 x, y = x.cuda(), y.cuda()
                 N = x.shape[0]
                 x_adv = pgd_attack(x,y)
+
+                adv_batch_set.append((x_adv, y))
                 #output = self.model(images)
                 adv_out = model(x_adv)
 
@@ -47,7 +51,7 @@ def robust_finetune_2(model, epochs, train_loader, config):
                 optimizer.step()
                
             adjust_learning_rate(lr, optimizer, epoch, epochs)
-        return
+        return adv_batch_set
 
 def robust_finetune(model, epochs, train_loader, config):
         # Todo
@@ -60,11 +64,18 @@ def robust_finetune(model, epochs, train_loader, config):
         criterion_kl = nn.KLDivLoss(size_average=False)
         XENT_loss = nn.CrossEntropyLoss()
 
+        adv_batch_set = []
+
         for epoch in range(epochs):
             for step, (indexs, x, y) in enumerate(train_loader):
                 x, y = x.cuda(), y.cuda()
                 N = x.shape[0]
                 x_adv = pgd_attack(x,y)
+
+
+                if epoch == epochs - 1 :
+                    adv_batch_set.append((x_adv.detach().cpu().numpy(), y.detach().cpu().numpy()))
+                
                 #output = self.model(images)
                 adv_out = model(x_adv)
 
@@ -83,7 +94,7 @@ def robust_finetune(model, epochs, train_loader, config):
                 optimizer.step()
                
             adjust_learning_rate(lr, optimizer, epoch, epochs)
-        return
+        return adv_batch_set
 
 
 def adjust_learning_rate(lr, optimizer, epoch, epochs):
