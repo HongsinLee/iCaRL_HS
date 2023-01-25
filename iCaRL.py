@@ -255,7 +255,7 @@ class iCaRLmodel:
 
         exemplar_method_function = "_construct_exemplar_set_" + exemplar_way
 
-        if exemplar_way == "herding_adv" or exemplar_way == "herding_adv_ratio" :
+        if exemplar_way == "herding_adv" or exemplar_way == "herding_adv_ratio" or exemplar_way == "random_and_herding" :
             is_fully_compute_class_mean = 0
 
 
@@ -410,7 +410,8 @@ class iCaRLmodel:
         else :
             for i in range(num_herding, num_random):
                 exemplar.append(temp_random[i])
-
+                
+        self.herding_set.append(temp_herding)
         self.exemplar_set.append(exemplar)
         #self.exemplar_set.append(images)
 
